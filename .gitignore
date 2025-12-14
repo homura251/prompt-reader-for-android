@@ -1,0 +1,28 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Ignore nested git metadata from vendored repos
+**/.git/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.venv/
+
+# Gradle / Kotlin
+**/.gradle/
+**/build/
+**/.kotlin/
+
+# Android Studio
+**/*.iml
+**/.idea/
+
+# Local SDK config (machine-specific)
+prompt-reader-android/local.properties
+
+# Logs
+**/*.log
