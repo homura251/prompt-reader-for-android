@@ -28,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.promptreader.android.parser.PromptReader
+import com.promptreader.android.parser.SettingEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +78,8 @@ class MainActivity : ComponentActivity() {
                 var positive by remember { mutableStateOf("") }
                 var negative by remember { mutableStateOf("") }
                 var setting by remember { mutableStateOf("") }
+                var settingDetail by remember { mutableStateOf("") }
+                var settingEntries by remember { mutableStateOf<List<SettingEntry>>(emptyList()) }
                 var raw by remember { mutableStateOf("") }
                 var error by remember { mutableStateOf<String?>(null) }
                 var isLoading by remember { mutableStateOf(false) }
@@ -103,6 +108,8 @@ class MainActivity : ComponentActivity() {
                     isLoading = true
                     imageInfo = null
                     thumbnail = null
+                    settingDetail = ""
+                    settingEntries = emptyList()
 
                     runCatching {
                         contentResolver.takePersistableUriPermission(
@@ -128,6 +135,8 @@ class MainActivity : ComponentActivity() {
                             positive = it.positive
                             negative = it.negative
                             setting = it.setting
+                            settingDetail = it.settingDetail
+                            settingEntries = it.settingEntries
                             raw = it.raw
                         },
                         onFailure = {
@@ -154,6 +163,8 @@ class MainActivity : ComponentActivity() {
                     positive = positive,
                     negative = negative,
                     setting = setting,
+                    settingDetail = settingDetail,
+                    settingEntries = settingEntries,
                     raw = raw,
                     tabIndex = tabIndex,
                     onTabIndexChange = { tabIndex = it },
@@ -164,6 +175,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+private enum class ViewMode {
+    Simple,
+    Normal,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -178,6 +194,8 @@ private fun PromptReaderScreen(
     positive: String,
     negative: String,
     setting: String,
+    settingDetail: String,
+    settingEntries: List<SettingEntry>,
     raw: String,
     tabIndex: Int,
     onTabIndexChange: (Int) -> Unit,
@@ -187,6 +205,10 @@ private fun PromptReaderScreen(
 ) {
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+
+    var positiveMode by remember { mutableStateOf(ViewMode.Normal) }
+    var negativeMode by remember { mutableStateOf(ViewMode.Normal) }
+    var paramsMode by remember { mutableStateOf(ViewMode.Simple) }
 
     Scaffold(
         topBar = {
@@ -326,15 +348,10 @@ private fun PromptReaderScreen(
                 }
             }
 
-            val tabs = listOf(
-                "正向" to positive,
-                "反向" to negative,
-                "参数" to setting,
-                "Raw" to raw,
-            )
+            val tabTitles = listOf("正向", "反向", "参数", "Raw")
 
             TabRow(selectedTabIndex = tabIndex) {
-                tabs.forEachIndexed { index, (title, _) ->
+                tabTitles.forEachIndexed { index, title ->
                     Tab(
                         selected = tabIndex == index,
                         onClick = { onTabIndexChange(index) },
@@ -343,7 +360,16 @@ private fun PromptReaderScreen(
                 }
             }
 
-            val (title, content) = tabs[tabIndex]
+            val title = tabTitles[tabIndex]
+            val contentToCopy = when (tabIndex) {
+                0 -> positive
+                1 -> negative
+                2 -> when (paramsMode) {
+                    ViewMode.Simple -> buildSettingCopyText(settingEntries.ifEmpty { parseSettingEntriesFromText(setting) })
+                    ViewMode.Normal -> (settingDetail.ifBlank { setting }).ifBlank { "" }
+                }
+                else -> raw
+            }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier
@@ -360,48 +386,87 @@ private fun PromptReaderScreen(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
+
+                        val canToggleMode = tabIndex in 0..2
+                        if (canToggleMode) {
+                            val mode = when (tabIndex) {
+                                0 -> positiveMode
+                                1 -> negativeMode
+                                else -> paramsMode
+                            }
+                            IconButton(
+                                onClick = {
+                                    val next = if (mode == ViewMode.Simple) ViewMode.Normal else ViewMode.Simple
+                                    when (tabIndex) {
+                                        0 -> positiveMode = next
+                                        1 -> negativeMode = next
+                                        2 -> paramsMode = next
+                                    }
+                                },
+                            ) {
+                                if (mode == ViewMode.Simple) {
+                                    Icon(Icons.Filled.Lightbulb, contentDescription = "切换为 Normal")
+                                } else {
+                                    Icon(Icons.Outlined.Lightbulb, contentDescription = "切换为 Simple")
+                                }
+                            }
+                        }
+
                         IconButton(
                             onClick = {
-                                if (content.isNotBlank()) {
-                                    scope.launch { onCopy(content, title) }
+                                if (contentToCopy.isNotBlank()) {
+                                    scope.launch { onCopy(contentToCopy, title) }
                                 }
                             },
-                            enabled = content.isNotBlank(),
+                            enabled = contentToCopy.isNotBlank(),
                         ) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = "复制")
                         }
                     }
 
-                    if (tabIndex == 2) {
-                        val pairs = remember(setting) { parseSettingPairs(setting) }
-                        if (pairs.isNotEmpty()) {
-                            pairs.forEach { (k, v) ->
-                                ListItem(
-                                    headlineContent = { Text(k) },
-                                    supportingContent = { Text(v) },
-                                )
+                    when (tabIndex) {
+                        0 -> {
+                            when (positiveMode) {
+                                ViewMode.Simple -> PromptTokenList(text = positive)
+                                ViewMode.Normal -> PromptTextBox(title = title, text = positive, tall = false)
                             }
-                        } else {
-                            OutlinedTextField(
-                                value = content,
-                                onValueChange = {},
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(220.dp),
-                                label = { Text(title) },
-                                readOnly = true,
-                            )
                         }
-                    } else {
-                        OutlinedTextField(
-                            value = content,
-                            onValueChange = {},
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(if (tabIndex == 3) 320.dp else 220.dp),
-                            label = { Text(title) },
-                            readOnly = true,
-                        )
+
+                        1 -> {
+                            when (negativeMode) {
+                                ViewMode.Simple -> PromptTokenList(text = negative)
+                                ViewMode.Normal -> PromptTextBox(title = title, text = negative, tall = false)
+                            }
+                        }
+
+                        2 -> {
+                            when (paramsMode) {
+                                ViewMode.Simple -> {
+                                    val entries = remember(setting, settingEntries) {
+                                        settingEntries.ifEmpty { parseSettingEntriesFromText(setting) }
+                                    }
+                                    if (entries.isNotEmpty()) {
+                                        entries.forEach { (k, v) ->
+                                            ListItem(
+                                                headlineContent = { Text(k) },
+                                                supportingContent = { Text(v) },
+                                            )
+                                        }
+                                    } else {
+                                        PromptTextBox(title = title, text = setting, tall = false)
+                                    }
+                                }
+
+                                ViewMode.Normal -> {
+                                    val detail = settingDetail.ifBlank { setting }
+                                    PromptTextBox(title = title, text = detail, tall = true)
+                                }
+                            }
+                        }
+
+                        else -> {
+                            PromptTextBox(title = title, text = raw, tall = true)
+                        }
                     }
                 }
             }
@@ -543,4 +608,51 @@ private fun parseSettingPairs(setting: String): List<Pair<String, String>> {
         if (key.isNotBlank() && value.isNotBlank()) pairs += key to value
     }
     return pairs
+}
+
+private fun parseSettingEntriesFromText(setting: String): List<SettingEntry> {
+    return parseSettingPairs(setting).map { SettingEntry(it.first, it.second) }
+}
+
+private fun buildSettingCopyText(entries: List<SettingEntry>): String {
+    if (entries.isEmpty()) return ""
+    return entries.joinToString("\n") { "${it.key}: ${it.value}" }
+}
+
+@androidx.compose.runtime.Composable
+private fun PromptTextBox(title: String, text: String, tall: Boolean) {
+    OutlinedTextField(
+        value = text,
+        onValueChange = {},
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (tall) 320.dp else 220.dp),
+        label = { Text(title) },
+        readOnly = true,
+    )
+}
+
+@androidx.compose.runtime.Composable
+private fun PromptTokenList(text: String) {
+    val tokens = remember(text) {
+        text.split(',')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .take(400)
+    }
+    if (tokens.isEmpty()) {
+        Text(
+            text = "（空）",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+
+    tokens.forEachIndexed { index, token ->
+        ListItem(
+            headlineContent = { Text(token) },
+            supportingContent = { Text("#${index + 1}") },
+        )
+    }
 }

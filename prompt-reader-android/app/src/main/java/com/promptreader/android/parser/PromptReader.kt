@@ -50,13 +50,29 @@ object PromptReader {
         // NovelAI legacy (must run before Fooocus; NovelAI Comment is also JSON)
         if (software == "NovelAI" && !description.isNullOrBlank() && !comment.isNullOrBlank()) {
             val r = NovelAiParser.parseLegacy(description, comment)
-            return PromptParseResult(tool = "NovelAI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "NovelAI",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         // Fooocus in PNG: Comment is JSON (but not every JSON comment is Fooocus)
         if (!comment.isNullOrBlank() && looksLikeFooocusComment(comment)) {
             val r = FooocusParser.parse(comment)
-            return PromptParseResult(tool = "Fooocus", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "Fooocus",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         // ComfyUI
@@ -76,7 +92,15 @@ object PromptReader {
         val stealth = tryDecodeStealth(context, uri)
         if (stealth != null) {
             val r = NovelAiParser.parseStealth(stealth)
-            return PromptParseResult(tool = "NovelAI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "NovelAI",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         return PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = textMap.toString())
@@ -109,7 +133,15 @@ object PromptReader {
         // Fooocus: some variants store JSON in comment/usercomment
         if (!userComment.isNullOrBlank() && userComment.trim().startsWith("{") && userComment.contains("negative_prompt")) {
             val r = FooocusParser.parse(userComment)
-            return PromptParseResult(tool = "Fooocus", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "Fooocus",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         // A1111 / EasyDiffusion: usercomment often contains the full text
@@ -122,14 +154,30 @@ object PromptReader {
         val stealth = tryDecodeStealth(context, uri)
         if (stealth != null) {
             val r = NovelAiParser.parseStealth(stealth)
-            return PromptParseResult(tool = "NovelAI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "NovelAI",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         // NovelAI legacy sometimes shows up via EXIF tags.
         if (software == "NovelAI" && !imageDescription.isNullOrBlank()) {
             val comment = userComment ?: "{}"
             val r = NovelAiParser.parseLegacy(imageDescription, comment)
-            return PromptParseResult(tool = "NovelAI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+            return PromptParseResult(
+                tool = "NovelAI",
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+            )
         }
 
         return PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = "No readable metadata")

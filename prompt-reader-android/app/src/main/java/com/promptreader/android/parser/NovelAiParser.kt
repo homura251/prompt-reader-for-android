@@ -7,6 +7,8 @@ object NovelAiParser {
         val positive: String,
         val negative: String,
         val setting: String,
+        val settingEntries: List<SettingEntry>,
+        val settingDetail: String,
         val raw: String,
     )
 
@@ -15,16 +17,28 @@ object NovelAiParser {
         val data = runCatching { JSONObject(commentJson) }.getOrNull()
         if (data == null) {
             val raw = listOf(positive, commentJson.trim()).filter { it.isNotBlank() }.joinToString("\n")
-            return Result(positive = positive, negative = "", setting = "", raw = raw)
+            return Result(
+                positive = positive,
+                negative = "",
+                setting = "",
+                settingEntries = emptyList(),
+                settingDetail = "",
+                raw = raw,
+            )
         }
 
         val negative = data.optString("uc", "").trim()
-        val copy = JSONObject(data.toString()).apply { remove("uc") }
+        val entries = buildNovelAiSettingEntries(data)
+        val setting = buildSummary(entries)
 
-        val setting = copy.toString().trim('{', '}').replace("\"", "").trim()
+        val detailObj = JSONObject(data.toString()).apply {
+            remove("prompt")
+            remove("uc")
+        }
+        val settingDetail = if (detailObj.length() > 0) detailObj.toString(2) else ""
         val raw = listOf(positive, negative, data.toString()).filter { it.isNotBlank() }.joinToString("\n")
 
-        return Result(positive, negative, setting, raw)
+        return Result(positive, negative, setting, entries, settingDetail, raw)
     }
 
     fun parseStealth(json: JSONObject): Result {
@@ -45,14 +59,52 @@ object NovelAiParser {
         val positive = merged.optString("prompt", merged.optString("Description", "")).trim()
         val negative = merged.optString("uc", "").trim()
 
-        val copy = JSONObject(merged.toString())
-        copy.remove("prompt")
-        copy.remove("uc")
-        copy.remove("Description")
+        val entries = buildNovelAiSettingEntries(merged)
+        val setting = buildSummary(entries)
 
-        val setting = copy.toString().trim('{', '}').replace("\"", "").trim()
+        val detailObj = JSONObject(merged.toString()).apply {
+            remove("prompt")
+            remove("uc")
+            remove("Description")
+        }
+        val settingDetail = if (detailObj.length() > 0) detailObj.toString(2) else ""
         val raw = listOf(positive, negative, merged.toString()).filter { it.isNotBlank() }.joinToString("\n")
 
-        return Result(positive, negative, setting, raw)
+        return Result(positive, negative, setting, entries, settingDetail, raw)
+    }
+
+    private fun buildNovelAiSettingEntries(data: JSONObject): List<SettingEntry> {
+        val entries = ArrayList<SettingEntry>()
+
+        val sampler = data.optString("sampler", "").trim()
+        val steps = data.optInt("steps", -1)
+        val scale = data.optDouble("scale", Double.NaN)
+        val seed = runCatching { data.getLong("seed") }.getOrNull()
+        val width = data.optInt("width", -1)
+        val height = data.optInt("height", -1)
+        val cfgRescale = data.optDouble("cfg_rescale", Double.NaN)
+        val noiseSchedule = data.optString("noise_schedule", "").trim()
+        val strength = data.optDouble("strength", Double.NaN)
+
+        if (steps >= 0) entries += SettingEntry("Steps", steps.toString())
+        if (sampler.isNotBlank()) entries += SettingEntry("Sampler", sampler)
+        if (!scale.isNaN()) entries += SettingEntry("CFG scale", trimNumber(scale))
+        if (seed != null) entries += SettingEntry("Seed", seed.toString())
+        if (width > 0 && height > 0) entries += SettingEntry("Size", "${width}x${height}")
+        if (!cfgRescale.isNaN()) entries += SettingEntry("CFG rescale", trimNumber(cfgRescale))
+        if (noiseSchedule.isNotBlank()) entries += SettingEntry("Noise schedule", noiseSchedule)
+        if (!strength.isNaN()) entries += SettingEntry("Strength", trimNumber(strength))
+
+        return entries
+    }
+
+    private fun trimNumber(v: Double): String {
+        val s = v.toString()
+        return if (s.endsWith(".0")) s.dropLast(2) else s
+    }
+
+    private fun buildSummary(entries: List<SettingEntry>): String {
+        if (entries.isEmpty()) return ""
+        return entries.joinToString(", ") { "${it.key}: ${it.value}" }
     }
 }
