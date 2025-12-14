@@ -29,3 +29,10 @@ prompt-reader-android/local.properties
 
 # Logs
 **/*.log
+
+# Local test images
+*.png
+*.jpg
+*.jpeg
+*.webp
+

@@ -8,6 +8,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.promptreader.android.novelai.NovelAiStealthDecoder
 import com.promptreader.android.png.PngTextChunkReader
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.InputStream
 
 object PromptReader {
@@ -46,16 +47,16 @@ object PromptReader {
             return PromptParseResult(tool = "StableSwarmUI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
         }
 
-        // Fooocus in PNG: Comment is JSON
-        if (!comment.isNullOrBlank() && comment.trim().startsWith("{")) {
-            val r = FooocusParser.parse(comment)
-            return PromptParseResult(tool = "Fooocus", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
-        }
-
-        // NovelAI legacy
+        // NovelAI legacy (must run before Fooocus; NovelAI Comment is also JSON)
         if (software == "NovelAI" && !description.isNullOrBlank() && !comment.isNullOrBlank()) {
             val r = NovelAiParser.parseLegacy(description, comment)
             return PromptParseResult(tool = "NovelAI", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
+        }
+
+        // Fooocus in PNG: Comment is JSON (but not every JSON comment is Fooocus)
+        if (!comment.isNullOrBlank() && looksLikeFooocusComment(comment)) {
+            val r = FooocusParser.parse(comment)
+            return PromptParseResult(tool = "Fooocus", positive = r.positive, negative = r.negative, setting = r.setting, raw = r.raw)
         }
 
         // ComfyUI
@@ -79,6 +80,16 @@ object PromptReader {
         }
 
         return PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = textMap.toString())
+    }
+
+    private fun looksLikeFooocusComment(comment: String): Boolean {
+        val trimmed = comment.trim()
+        if (!trimmed.startsWith("{")) return false
+        val obj = runCatching { JSONTokener(trimmed).nextValue() }.getOrNull() as? JSONObject ?: return false
+        // Fooocus typically uses these keys.
+        if (!obj.has("negative_prompt")) return false
+        // Prompt might be named 'prompt' in Fooocus.
+        return obj.has("prompt") || obj.has("styles") || obj.has("performance")
     }
 
     private fun parseExifLike(context: Context, uri: Uri): PromptParseResult {

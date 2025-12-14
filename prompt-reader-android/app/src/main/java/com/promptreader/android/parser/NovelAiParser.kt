@@ -12,11 +12,14 @@ object NovelAiParser {
 
     fun parseLegacy(description: String, commentJson: String): Result {
         val positive = description.trim()
-        val data = JSONObject(commentJson)
-        val negative = data.optString("uc", "").trim()
+        val data = runCatching { JSONObject(commentJson) }.getOrNull()
+        if (data == null) {
+            val raw = listOf(positive, commentJson.trim()).filter { it.isNotBlank() }.joinToString("\n")
+            return Result(positive = positive, negative = "", setting = "", raw = raw)
+        }
 
-        val copy = JSONObject(data.toString())
-        copy.remove("uc")
+        val negative = data.optString("uc", "").trim()
+        val copy = JSONObject(data.toString()).apply { remove("uc") }
 
         val setting = copy.toString().trim('{', '}').replace("\"", "").trim()
         val raw = listOf(positive, negative, data.toString()).filter { it.isNotBlank() }.joinToString("\n")
