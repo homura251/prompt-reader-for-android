@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +48,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
@@ -64,10 +70,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.promptreader.android.parser.PromptReader
@@ -85,14 +94,30 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
+            val ctx = LocalContext.current
             val prefs = remember { ThemePrefs(this@MainActivity) }
             var themeMode by remember { mutableStateOf(prefs.load()) }
+            val dynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
             val colorScheme = when (themeMode) {
-                ThemeMode.Dark -> darkColorScheme()
-                ThemeMode.Light -> lightColorScheme()
-                ThemeMode.System -> if (androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+                ThemeMode.Dark -> if (dynamic) dynamicDarkColorScheme(ctx) else darkColorScheme()
+                ThemeMode.Light -> if (dynamic) dynamicLightColorScheme(ctx) else lightColorScheme()
+                ThemeMode.System -> if (systemDark) {
+                    if (dynamic) dynamicDarkColorScheme(ctx) else darkColorScheme()
+                } else {
+                    if (dynamic) dynamicLightColorScheme(ctx) else lightColorScheme()
+                }
             }
-            MaterialTheme(colorScheme = colorScheme) {
+            val shapes = remember {
+                Shapes(
+                    extraSmall = RoundedCornerShape(12.dp),
+                    small = RoundedCornerShape(16.dp),
+                    medium = RoundedCornerShape(20.dp),
+                    large = RoundedCornerShape(24.dp),
+                    extraLarge = RoundedCornerShape(28.dp),
+                )
+            }
+            MaterialTheme(colorScheme = colorScheme, shapes = shapes) {
                 var selectedUri by remember { mutableStateOf<Uri?>(null) }
                 var tool by remember { mutableStateOf("") }
                 var positive by remember { mutableStateOf("") }
@@ -371,13 +396,27 @@ private fun PromptReaderScreen(
                     }
 
                     if (thumbnail != null) {
+                        val aspectRatio = remember(imageInfo) {
+                            val w = imageInfo?.width
+                            val h = imageInfo?.height
+                            if (w != null && h != null && w > 0 && h > 0) w.toFloat() / h.toFloat() else null
+                        }
                         Image(
                             bitmap = thumbnail,
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(180.dp),
-                            contentScale = ContentScale.Crop,
+                                .then(
+                                    if (aspectRatio != null) {
+                                        Modifier.aspectRatio(aspectRatio)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .heightIn(min = 140.dp, max = 360.dp)
+                                .clip(MaterialTheme.shapes.large),
+                            contentScale = ContentScale.Fit,
+                            alignment = Alignment.Center,
                         )
                     }
 
@@ -740,7 +779,6 @@ private fun RawViewer(
 
 @androidx.compose.runtime.Composable
 private fun ChunkedTextViewer(text: String, heightDp: Int) {
-    val shape = RoundedCornerShape(6.dp)
     val chunkSize = 2000
     val chunkCount = remember(text) { if (text.isEmpty()) 0 else (text.length + chunkSize - 1) / chunkSize }
 
@@ -748,7 +786,7 @@ private fun ChunkedTextViewer(text: String, heightDp: Int) {
         modifier = Modifier
             .fillMaxWidth()
             .height(heightDp.dp),
-        shape = shape,
+        shape = MaterialTheme.shapes.large,
     ) {
         Box(modifier = Modifier.padding(12.dp)) {
             if (text.isBlank()) {
@@ -894,6 +932,7 @@ private fun PromptTextBox(title: String, text: String, tall: Boolean, maxDisplay
         modifier = Modifier
             .fillMaxWidth()
             .height(if (tall) 320.dp else 220.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         label = { Text(title) },
         readOnly = true,
     )
@@ -923,10 +962,9 @@ private fun PromptTokenList(text: String) {
         return
     }
 
-    tokens.forEachIndexed { index, token ->
+    tokens.forEach { token ->
         ListItem(
             headlineContent = { Text(token) },
-            supportingContent = { Text("#${index + 1}") },
         )
     }
 }
