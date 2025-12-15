@@ -180,6 +180,16 @@ P1（交付体验）
 - 增加 GitHub Release（签名/版本号）或 CI（GitHub Actions）自动产出 APK
 - 已增加错误提示：显示识别路径（用了哪个 parser/哪个字段命中）并可一键复制，便于用户报错
 
+Release signing (important for upgrades)
+- Android app upgrades require the *same signing key* across releases; do NOT generate a random keystore per release.
+- CI release workflow uses GitHub Secrets (see `.github/workflows/android-release.yml`):
+  - `ANDROID_KEYSTORE_BASE64` (base64 of `release.jks`)
+  - `ANDROID_KEYSTORE_PASSWORD`
+  - `ANDROID_KEY_ALIAS`
+  - `ANDROID_KEY_PASSWORD`
+- Local signing: create `prompt-reader-android/keystore.properties` from `prompt-reader-android/keystore.properties.example` (never commit it).
+- Backup: keep `prompt-reader-android/release.jks` + passwords in a secure backup (password manager + offline copy); you can use `prompt-reader-android/tools/export-keystore-secrets.ps1` to generate base64 for Secrets.
+
 P2（功能扩展）
 - 批量选择/批量导出 JSON
 - 编辑/写回（风险高：不同格式写回策略不同，避免污染 parameters/workflow）

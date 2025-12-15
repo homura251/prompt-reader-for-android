@@ -29,31 +29,28 @@ jobs:
         shell: bash
         run: chmod +x prompt-reader-android/gradlew
 
-      - name: Generate release keystore
+      - name: Prepare signing keystore
         working-directory: prompt-reader-android
         shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          STORE_PASS="$(openssl rand -hex 16)"
-          KEY_PASS="$(openssl rand -hex 16)"
-          ALIAS="release"
+          test -n "${ANDROID_KEYSTORE_BASE64:-}" || { echo "Missing secret: ANDROID_KEYSTORE_BASE64"; exit 1; }
+          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo "Missing secret: ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+          test -n "${ANDROID_KEY_ALIAS:-}" || { echo "Missing secret: ANDROID_KEY_ALIAS"; exit 1; }
+          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo "Missing secret: ANDROID_KEY_PASSWORD"; exit 1; }
 
-          keytool -genkeypair -v \
-            -storetype JKS \
-            -keystore release.jks \
-            -storepass "$STORE_PASS" \
-            -keypass "$KEY_PASS" \
-            -alias "$ALIAS" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Prompt Reader,O=Prompt Reader,C=US"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.jks
 
           cat > keystore.properties <<EOF
           storeFile=release.jks
-          storePassword=$STORE_PASS
-          keyAlias=$ALIAS
-          keyPassword=$KEY_PASS
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
           EOF
 
       - name: Build release artifacts
