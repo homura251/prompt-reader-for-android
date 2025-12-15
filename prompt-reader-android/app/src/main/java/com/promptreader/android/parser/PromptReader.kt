@@ -23,22 +23,35 @@ object PromptReader {
         val isJpeg = header.size >= 2 && (header[0].toInt() and 0xFF) == 0xFF && (header[1].toInt() and 0xFF) == 0xD8
         val isWebp = header.size >= 12 && String(header, 0, 4, Charsets.ISO_8859_1) == "RIFF" && String(header, 8, 4, Charsets.ISO_8859_1) == "WEBP"
 
+        val evidence = mutableListOf<ParseEvidence>()
+
         return when {
-            isPng -> parsePng(context, uri)
-            isJpeg -> parseExifLike(context, uri, "JPEG")
-            isWebp -> parseExifLike(context, uri, "WEBP")
+            isPng -> {
+                evidence += ParseEvidence("File", "PNG")
+                parsePng(context, uri, evidence)
+            }
+            isJpeg -> {
+                evidence += ParseEvidence("File", "JPEG")
+                parseExifLike(context, uri, "JPEG", evidence)
+            }
+            isWebp -> {
+                evidence += ParseEvidence("File", "WEBP")
+                parseExifLike(context, uri, "WEBP", evidence)
+            }
             else -> PromptParseResult(
                 tool = "Unknown",
                 positive = "",
                 negative = "",
                 setting = "",
                 raw = "Unsupported file",
+                rawParts = listOf(RawPart("Error", "Unsupported file")),
                 detectionPath = "Unknown",
+                detectionEvidence = evidence + ParseEvidence("Error", "Unsupported file"),
             )
         }
     }
 
-    private fun parsePng(context: Context, uri: Uri): PromptParseResult {
+    private fun parsePng(context: Context, uri: Uri, evidence: MutableList<ParseEvidence>): PromptParseResult {
         val resolver = context.contentResolver
         val textMap = resolver.openInputStream(uri)?.use { PngTextChunkReader.readTextChunks(it) } ?: emptyMap()
 
@@ -54,6 +67,19 @@ object PromptReader {
             .joinToString(",")
         val base = "PNG -> tEXt($presentKeys)"
 
+        evidence += ParseEvidence("PNG tEXt", presentKeys.ifBlank { "(none)" })
+
+        fun rawPartsForPng(vararg items: Pair<String, String?>): List<RawPart> {
+            val parts = ArrayList<RawPart>()
+            for ((k, v) in items) {
+                if (v.isNullOrBlank()) continue
+                val trimmed = v.trimStart()
+                val mime = if (trimmed.startsWith("{") || trimmed.startsWith("[")) "application/json" else "text/plain"
+                parts += RawPart("PNG tEXt: $k", v, mime)
+            }
+            return parts
+        }
+
         // SwarmUI in PNG: parameters contains sui_image_params
         if (!parameters.isNullOrBlank() && parameters.contains("sui_image_params")) {
             val r = SwarmUiParser.parse(parameters)
@@ -63,9 +89,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("parameters" to parameters),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> SwarmUiParser(parameters:sui_image_params)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "SwarmUiParser(parameters:sui_image_params)"),
             )
         }
 
@@ -78,9 +106,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("Software" to software, "Description" to description, "Comment" to comment),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> NovelAiParser(legacy:Software+Description+Comment)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "NovelAiParser(legacy:Software+Description+Comment)"),
             )
         }
 
@@ -93,9 +123,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("Comment" to comment),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> FooocusParser(Comment:json+negative_prompt)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "FooocusParser(Comment:json+negative_prompt)"),
             )
         }
 
@@ -108,9 +140,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("workflow" to workflow),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> ComfyUiParser(workflow)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "ComfyUiParser(workflow)"),
             )
         }
 
@@ -123,9 +157,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("prompt" to prompt, "workflow" to workflow),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> ComfyUiParser(prompt${if (!workflow.isNullOrBlank()) "+workflow" else ""})",
+                detectionEvidence = evidence + ParseEvidence("Parser", "ComfyUiParser(prompt${if (!workflow.isNullOrBlank()) "+workflow" else ""})"),
             )
         }
 
@@ -139,9 +175,11 @@ object PromptReader {
                     negative = r.negative,
                     setting = r.setting,
                     raw = r.raw,
+                    rawParts = rawPartsForPng("parameters" to parameters),
                     settingEntries = r.settingEntries,
                     settingDetail = r.settingDetail,
                     detectionPath = "$base -> ComfyUiParser(parameters:workflow-json)",
+                    detectionEvidence = evidence + ParseEvidence("Parser", "ComfyUiParser(parameters:workflow-json)"),
                 )
             }
 
@@ -153,9 +191,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForPng("parameters" to parameters),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> A1111Parser(parameters)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "A1111Parser(parameters)"),
             )
         }
 
@@ -169,9 +209,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = listOf(RawPart("NovelAI stealth JSON", stealth.toString(), "application/json")),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> NovelAiParser(stealth:alpha-lsb)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "NovelAiParser(stealth:alpha-lsb)"),
             )
         }
 
@@ -181,7 +223,16 @@ object PromptReader {
             negative = "",
             setting = "",
             raw = textMap.toString(),
+            rawParts = rawPartsForPng(
+                "parameters" to parameters,
+                "prompt" to prompt,
+                "workflow" to workflow,
+                "Comment" to comment,
+                "Software" to software,
+                "Description" to description,
+            ),
             detectionPath = "$base -> Unknown",
+            detectionEvidence = evidence + ParseEvidence("Parser", "Unknown"),
         )
     }
 
@@ -195,7 +246,12 @@ object PromptReader {
         return obj.has("prompt") || obj.has("styles") || obj.has("performance")
     }
 
-    private fun parseExifLike(context: Context, uri: Uri, formatLabel: String): PromptParseResult {
+    private fun parseExifLike(
+        context: Context,
+        uri: Uri,
+        formatLabel: String,
+        evidence: MutableList<ParseEvidence>,
+    ): PromptParseResult {
         val resolver = context.contentResolver
         val exif = resolver.openInputStream(uri)?.use { ExifInterface(it) }
 
@@ -210,6 +266,22 @@ object PromptReader {
         }.joinToString(",")
         val base = "$formatLabel -> EXIF($present)"
 
+        evidence += ParseEvidence("EXIF", present.ifBlank { "(none)" })
+
+        fun rawPartsForExif(): List<RawPart> {
+            val parts = ArrayList<RawPart>()
+            fun add(title: String, text: String?) {
+                if (text.isNullOrBlank()) return
+                val trimmed = text.trimStart()
+                val mime = if (trimmed.startsWith("{") || trimmed.startsWith("[")) "application/json" else "text/plain"
+                parts += RawPart("$formatLabel EXIF: $title", text, mime)
+            }
+            add("Software", software)
+            add("ImageDescription", imageDescription)
+            add("UserComment", userComment)
+            return parts
+        }
+
         // SwarmUI in JPEG: user comment contains sui_image_params JSON
         if (!userComment.isNullOrBlank() && userComment.contains("sui_image_params")) {
             val r = SwarmUiParser.parse(userComment)
@@ -219,9 +291,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForExif(),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> SwarmUiParser(UserComment:sui_image_params)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "SwarmUiParser(UserComment:sui_image_params)"),
             )
         }
 
@@ -235,9 +309,11 @@ object PromptReader {
                     negative = r.negative,
                     setting = r.setting,
                     raw = r.raw,
+                    rawParts = rawPartsForExif(),
                     settingEntries = r.settingEntries,
                     settingDetail = r.settingDetail,
                     detectionPath = "$base -> ComfyUiParser(UserComment:workflow-json)",
+                    detectionEvidence = evidence + ParseEvidence("Parser", "ComfyUiParser(UserComment:workflow-json)"),
                 )
             }
         }
@@ -251,9 +327,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForExif(),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> FooocusParser(UserComment:json+negative_prompt)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "FooocusParser(UserComment:json+negative_prompt)"),
             )
         }
 
@@ -266,9 +344,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForExif(),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> A1111Parser(UserComment)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "A1111Parser(UserComment)"),
             )
         }
 
@@ -282,9 +362,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = listOf(RawPart("NovelAI stealth JSON", stealth.toString(), "application/json")),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> NovelAiParser(stealth:alpha-lsb)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "NovelAiParser(stealth:alpha-lsb)"),
             )
         }
 
@@ -298,9 +380,11 @@ object PromptReader {
                 negative = r.negative,
                 setting = r.setting,
                 raw = r.raw,
+                rawParts = rawPartsForExif(),
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
                 detectionPath = "$base -> NovelAiParser(legacy:Software+ImageDescription)",
+                detectionEvidence = evidence + ParseEvidence("Parser", "NovelAiParser(legacy:Software+ImageDescription)"),
             )
         }
 
@@ -310,7 +394,9 @@ object PromptReader {
             negative = "",
             setting = "",
             raw = "No readable metadata",
+            rawParts = rawPartsForExif(),
             detectionPath = "$base -> Unknown",
+            detectionEvidence = evidence + ParseEvidence("Parser", "Unknown"),
         )
     }
 

@@ -71,6 +71,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.promptreader.android.parser.PromptReader
+import com.promptreader.android.parser.RawPart
 import com.promptreader.android.parser.SettingEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
                 var settingEntries by remember { mutableStateOf<List<SettingEntry>>(emptyList()) }
                 var detectionPath by remember { mutableStateOf("") }
                 var raw by remember { mutableStateOf("") }
+                var rawParts by remember { mutableStateOf<List<RawPart>>(emptyList()) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var isLoading by remember { mutableStateOf(false) }
                 var tabIndex by remember { mutableIntStateOf(0) }
@@ -130,6 +132,7 @@ class MainActivity : ComponentActivity() {
                     thumbnail = null
                     settingDetail = ""
                     settingEntries = emptyList()
+                    rawParts = emptyList()
 
                     runCatching {
                         contentResolver.takePersistableUriPermission(
@@ -159,6 +162,7 @@ class MainActivity : ComponentActivity() {
                             settingEntries = it.settingEntries
                             detectionPath = it.detectionPath
                             raw = it.raw
+                            rawParts = it.rawParts
                         },
                         onFailure = {
                             error = it.message ?: it.toString()
@@ -188,6 +192,7 @@ class MainActivity : ComponentActivity() {
                     settingEntries = settingEntries,
                     detectionPath = detectionPath,
                     raw = raw,
+                    rawParts = rawParts,
                     tabIndex = tabIndex,
                     onTabIndexChange = { tabIndex = it },
                     onPickImage = { launcher.launch(arrayOf("image/*")) },
@@ -250,6 +255,7 @@ private fun PromptReaderScreen(
     settingEntries: List<SettingEntry>,
     detectionPath: String,
     raw: String,
+    rawParts: List<RawPart>,
     tabIndex: Int,
     onTabIndexChange: (Int) -> Unit,
     onPickImage: () -> Unit,
@@ -318,6 +324,8 @@ private fun PromptReaderScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            val combinedRaw = remember(raw, rawParts) { buildCombinedRaw(raw, rawParts) }
+
             if (isLoading) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
@@ -339,11 +347,11 @@ private fun PromptReaderScreen(
                             Text("选择图片")
                         }
 
-                        val canCopyAll = raw.isNotBlank()
+                        val canCopyAll = combinedRaw.isNotBlank()
                         Button(
                             onClick = {
                                 if (canCopyAll) {
-                                    scope.launch { onCopy(raw, "全部") }
+                                    scope.launch { onCopy(combinedRaw, "全部") }
                                 }
                             },
                             enabled = canCopyAll,
@@ -425,7 +433,7 @@ private fun PromptReaderScreen(
                         }
                     }
 
-                    if (error.isNullOrBlank() && positive.isBlank() && negative.isBlank() && raw.isNotBlank()) {
+                    if (error.isNullOrBlank() && positive.isBlank() && negative.isBlank() && combinedRaw.isNotBlank()) {
                         Text(
                             text = "提示：未能解析到正向/反向提示词，可能仅包含 workflow 元数据或使用了自定义节点；可复制 Raw + 识别路径用于报错。",
                             style = MaterialTheme.typography.bodySmall,
@@ -459,14 +467,14 @@ private fun PromptReaderScreen(
             val orderedSettingEntries = remember(setting, settingEntries) {
                 orderSettingEntriesForDisplay(settingEntries.ifEmpty { parseSettingEntriesFromText(setting) })
             }
-            val contentToCopy = when (tabIndex) {
-                0 -> positive
-                1 -> negative
-                2 -> when (paramsMode) {
-                    ViewMode.Simple -> buildSettingCopyText(orderedSettingEntries)
-                    ViewMode.Normal -> (settingDetail.ifBlank { setting }).ifBlank { "" }
-                }
-                else -> raw
+                val contentToCopy = when (tabIndex) {
+                    0 -> positive
+                    1 -> negative
+                    2 -> when (paramsMode) {
+                        ViewMode.Simple -> buildSettingCopyText(orderedSettingEntries)
+                        ViewMode.Normal -> (settingDetail.ifBlank { setting }).ifBlank { "" }
+                    }
+                else -> combinedRaw
             }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
@@ -561,9 +569,11 @@ private fun PromptReaderScreen(
 
                         else -> {
                             RawViewer(
-                                raw = raw,
+                                raw = combinedRaw,
+                                rawParts = rawParts,
                                 viewMode = rawViewMode,
                                 onViewModeChange = { rawViewMode = it },
+                                onCopy = onCopy,
                             )
                         }
                     }
@@ -600,11 +610,11 @@ private fun PromptReaderScreen(
 
             Button(
                 onClick = {
-                    if (raw.isNotBlank()) {
-                        scope.launch { onCopy(raw, "全部") }
+                    if (combinedRaw.isNotBlank()) {
+                        scope.launch { onCopy(combinedRaw, "全部") }
                     }
                 },
-                enabled = raw.isNotBlank(),
+                enabled = combinedRaw.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null)
@@ -619,13 +629,19 @@ private fun PromptReaderScreen(
 @androidx.compose.runtime.Composable
 private fun RawViewer(
     raw: String,
+    rawParts: List<RawPart>,
     viewMode: RawViewMode,
     onViewModeChange: (RawViewMode) -> Unit,
+    onCopy: suspend (String, String) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     val stats = remember(raw) {
         val chars = raw.length
         val lines = raw.count { it == '\n' } + 1
         chars to lines
+    }
+    val parts = remember(raw, rawParts) {
+        if (rawParts.isNotEmpty()) rawParts else listOf(RawPart("Raw", raw))
     }
 
     Row(
@@ -656,8 +672,53 @@ private fun RawViewer(
     Spacer(Modifier.height(8.dp))
 
     when (viewMode) {
-        RawViewMode.Compact -> PromptTextBox(title = "Raw", text = raw, tall = true, maxDisplayChars = 50_000)
-        RawViewMode.Chunked -> ChunkedTextViewer(text = raw, heightDp = 320)
+        RawViewMode.Compact -> {
+            if (parts.size == 1) {
+                PromptTextBox(title = parts.first().title, text = parts.first().text, tall = true, maxDisplayChars = 50_000)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    parts.forEach { part ->
+                        PromptTextBox(title = part.title, text = part.text, tall = true, maxDisplayChars = 50_000)
+                    }
+                }
+            }
+        }
+
+        RawViewMode.Chunked -> {
+            if (parts.size == 1) {
+                ChunkedTextViewer(text = parts.first().text, heightDp = 320)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    parts.forEach { part ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = part.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { scope.launch { onCopy(part.text, part.title) } },
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                            }
+                        }
+                        ChunkedTextViewer(text = part.text, heightDp = 220)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun buildCombinedRaw(raw: String, rawParts: List<RawPart>): String {
+    if (rawParts.isEmpty()) return raw
+    return rawParts.joinToString("\n\n") { part ->
+        val header = "### ${part.title}".trim()
+        val body = part.text.trim()
+        if (body.isBlank()) header else "$header\n$body"
     }
 }
 
