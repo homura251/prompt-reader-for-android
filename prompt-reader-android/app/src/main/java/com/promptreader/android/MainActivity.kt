@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
                 var setting by remember { mutableStateOf("") }
                 var settingDetail by remember { mutableStateOf("") }
                 var settingEntries by remember { mutableStateOf<List<SettingEntry>>(emptyList()) }
+                var detectionPath by remember { mutableStateOf("") }
                 var raw by remember { mutableStateOf("") }
                 var error by remember { mutableStateOf<String?>(null) }
                 var isLoading by remember { mutableStateOf(false) }
@@ -103,6 +104,7 @@ class MainActivity : ComponentActivity() {
                     positive = ""
                     negative = ""
                     setting = ""
+                    detectionPath = ""
                     raw = ""
                     tool = ""
                     isLoading = true
@@ -137,6 +139,7 @@ class MainActivity : ComponentActivity() {
                             setting = it.setting
                             settingDetail = it.settingDetail
                             settingEntries = it.settingEntries
+                            detectionPath = it.detectionPath
                             raw = it.raw
                         },
                         onFailure = {
@@ -165,6 +168,7 @@ class MainActivity : ComponentActivity() {
                     setting = setting,
                     settingDetail = settingDetail,
                     settingEntries = settingEntries,
+                    detectionPath = detectionPath,
                     raw = raw,
                     tabIndex = tabIndex,
                     onTabIndexChange = { tabIndex = it },
@@ -196,6 +200,7 @@ private fun PromptReaderScreen(
     setting: String,
     settingDetail: String,
     settingEntries: List<SettingEntry>,
+    detectionPath: String,
     raw: String,
     tabIndex: Int,
     onTabIndexChange: (Int) -> Unit,
@@ -317,6 +322,20 @@ private fun PromptReaderScreen(
                                 Text("$dim，$size")
                             },
                         )
+                        if (detectionPath.isNotBlank()) {
+                            ListItem(
+                                headlineContent = { Text("识别路径") },
+                                supportingContent = { Text(detectionPath) },
+                                leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
+                                trailingContent = {
+                                    IconButton(
+                                        onClick = { scope.launch { onCopy(detectionPath, "识别路径") } },
+                                    ) {
+                                        Icon(Icons.Filled.ContentCopy, contentDescription = "复制识别路径")
+                                    }
+                                },
+                            )
+                        }
                     } else {
                         if (selectedUri != null) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -336,6 +355,14 @@ private fun PromptReaderScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+
+                    if (error.isNullOrBlank() && positive.isBlank() && negative.isBlank() && raw.isNotBlank()) {
+                        Text(
+                            text = "提示：未能解析到正向/反向提示词，可能仅包含 workflow 元数据或使用了自定义节点；可复制 Raw + 识别路径用于报错。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
 
                     if (!error.isNullOrBlank()) {
@@ -465,7 +492,7 @@ private fun PromptReaderScreen(
                         }
 
                         else -> {
-                            PromptTextBox(title = title, text = raw, tall = true)
+                            PromptTextBox(title = title, text = raw, tall = true, maxDisplayChars = 200_000)
                         }
                     }
                 }
@@ -627,9 +654,10 @@ private fun buildSettingCopyText(entries: List<SettingEntry>): String {
 }
 
 @androidx.compose.runtime.Composable
-private fun PromptTextBox(title: String, text: String, tall: Boolean) {
+private fun PromptTextBox(title: String, text: String, tall: Boolean, maxDisplayChars: Int? = null) {
+    val displayText = remember(text, maxDisplayChars) { truncateForDisplay(text, maxDisplayChars) }
     OutlinedTextField(
-        value = text,
+        value = displayText,
         onValueChange = {},
         modifier = Modifier
             .fillMaxWidth()
@@ -637,6 +665,13 @@ private fun PromptTextBox(title: String, text: String, tall: Boolean) {
         label = { Text(title) },
         readOnly = true,
     )
+}
+
+private fun truncateForDisplay(text: String, maxChars: Int?): String {
+    if (maxChars == null || maxChars <= 0) return text
+    if (text.length <= maxChars) return text
+    val head = text.take(maxChars)
+    return head + "\n\n…(内容过大，已截断显示；共 ${text.length} 字符，复制按钮可复制完整内容)"
 }
 
 @androidx.compose.runtime.Composable

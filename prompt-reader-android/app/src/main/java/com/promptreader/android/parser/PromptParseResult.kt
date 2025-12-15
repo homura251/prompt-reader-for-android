@@ -13,4 +13,5 @@ data class PromptParseResult(
     val raw: String,
     val settingEntries: List<SettingEntry> = emptyList(),
     val settingDetail: String = "",
+    val detectionPath: String = "",
 )

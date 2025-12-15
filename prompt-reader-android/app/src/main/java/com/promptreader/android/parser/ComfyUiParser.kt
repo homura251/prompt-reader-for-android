@@ -2,6 +2,7 @@ package com.promptreader.android.parser
 
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 
 /**
  * Minimal port of sd_prompt_reader/format/comfyui.py.
@@ -26,6 +27,32 @@ object ComfyUiParser {
         val settingDetail: String = "",
         val tool: String = "ComfyUI",
     )
+
+    fun parseWorkflow(workflowText: String): Result {
+        val workflow = (runCatching { JSONTokener(workflowText).nextValue() }.getOrNull() as? JSONObject) ?: JSONObject()
+        val nodes = workflow.optJSONArray("nodes") ?: JSONArray()
+
+        val extracted = extractFromWorkflowNodes(nodes)
+        val model = extractModelFromWorkflowNodes(nodes)
+        val entries = buildWorkflowSettingEntries(extracted.settingText, model)
+        val setting = buildSettingFromEntries(entries)
+        val detail = buildWorkflowSettingDetail(entries, workflow)
+
+        val rawParts = mutableListOf<String>()
+        if (extracted.positive.isNotBlank()) rawParts += extracted.positive
+        if (extracted.negative.isNotBlank()) rawParts += extracted.negative
+        rawParts += workflowText.trim()
+
+        return Result(
+            positive = extracted.positive,
+            negative = extracted.negative,
+            setting = setting,
+            raw = rawParts.joinToString("\n"),
+            settingEntries = entries,
+            settingDetail = detail,
+            tool = "ComfyUI",
+        )
+    }
 
     fun parse(promptJsonText: String, workflowText: String? = null, width: Int? = null, height: Int? = null): Result {
         val promptObj = JSONObject(promptJsonText)
@@ -58,6 +85,11 @@ object ComfyUiParser {
         if (bestCtx != null) {
             positive = ctx.positive
             negative = ctx.negative
+        }
+        if ((!workflowText.isNullOrBlank()) && (positive.isBlank() || negative.isBlank())) {
+            val extracted = extractFromWorkflow(workflowText)
+            if (positive.isBlank() && extracted.positive.isNotBlank()) positive = extracted.positive
+            if (negative.isBlank() && extracted.negative.isNotBlank()) negative = extracted.negative
         }
         val modelName = extractModelName(promptObj, bestVisited, ctx.flow, workflowText)
         val settingEntries = buildSettingEntries(ctx.flow, width, height, modelName)
@@ -140,6 +172,110 @@ object ComfyUiParser {
         if (v == null) return null
         val s = v.toString().trim().trim('"', '\'')
         return s.takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    private data class WorkflowExtract(
+        val positive: String,
+        val negative: String,
+        val settingText: String,
+    )
+
+    private fun extractFromWorkflow(workflowText: String): WorkflowExtract {
+        val workflow = runCatching { JSONTokener(workflowText).nextValue() }.getOrNull() as? JSONObject ?: return WorkflowExtract("", "", "")
+        val nodes = workflow.optJSONArray("nodes") ?: return WorkflowExtract("", "", "")
+        return extractFromWorkflowNodes(nodes)
+    }
+
+    private fun extractFromWorkflowNodes(nodes: JSONArray): WorkflowExtract {
+        // Prefer SDPromptReader (comfyui-prompt-reader-node), which already aggregates POSITIVE/NEGATIVE/SETTINGS.
+        for (i in 0 until nodes.length()) {
+            val node = nodes.optJSONObject(i) ?: continue
+            val type = node.optString("type", "")
+            if (type != "SDPromptReader") continue
+            val widgets = node.optJSONArray("widgets_values") ?: continue
+            val positive = widgets.optString(3, "").trim()
+            val negative = widgets.optString(4, "").trim()
+            val settingText = widgets.optString(5, "").trim()
+            return WorkflowExtract(positive, negative, settingText)
+        }
+        return WorkflowExtract("", "", "")
+    }
+
+    private fun extractModelFromWorkflowNodes(nodes: JSONArray): String? {
+        // Prefer checkpoint loader nodes to avoid picking LoRA/embedding weights.
+        for (i in 0 until nodes.length()) {
+            val node = nodes.optJSONObject(i) ?: continue
+            val type = node.optString("type", "")
+            if (!type.contains("ckpt", ignoreCase = true) && !type.contains("checkpoint", ignoreCase = true)) continue
+            val widgets = node.optJSONArray("widgets_values") ?: continue
+            for (j in 0 until widgets.length()) {
+                val s = widgets.optString(j, "").trim()
+                if (CHECKPOINT_FILE_REGEX.matches(s)) return s
+            }
+        }
+
+        // Fallback: scan the whole workflow for checkpoint-like strings.
+        for (i in 0 until nodes.length()) {
+            val node = nodes.optJSONObject(i) ?: continue
+            val widgets = node.optJSONArray("widgets_values") ?: continue
+            for (j in 0 until widgets.length()) {
+                val s = widgets.optString(j, "").trim()
+                if (CHECKPOINT_FILE_REGEX.matches(s)) return s
+            }
+        }
+        return null
+    }
+
+    private fun buildWorkflowSettingEntries(settingText: String, model: String?): List<SettingEntry> {
+        val map = LinkedHashMap<String, String>()
+        if (settingText.isNotBlank()) {
+            val parts = settingText.split(',')
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            for (p in parts) {
+                val idx = p.indexOf(':')
+                if (idx <= 0 || idx >= p.length - 1) continue
+                val key = p.substring(0, idx).trim().lowercase()
+                val value = p.substring(idx + 1).trim()
+                if (key in setOf("prompt", "negative prompt", "negativeprompt", "uc")) continue
+                if (value.isBlank()) continue
+                map[key] = value
+            }
+        }
+
+        val width = map["width"]?.toIntOrNull()
+        val height = map["height"]?.toIntOrNull()
+        val steps = map["steps"]
+        val sampler = map["sampler"] ?: map["sampler_name"]
+        val cfg = map["cfg"] ?: map["cfg scale"] ?: map["scale"]
+        val seed = map["seed"]
+
+        val entries = ArrayList<SettingEntry>()
+        normalizeString(model)?.let { entries += SettingEntry("Model", it) }
+        steps?.let { entries += SettingEntry("Steps", it) }
+        sampler?.let { entries += SettingEntry("Sampler", it) }
+        cfg?.let { entries += SettingEntry("CFG scale", it) }
+        seed?.let { entries += SettingEntry("Seed", it) }
+        if (width != null && height != null) entries += SettingEntry("Size", "${width}x${height}")
+        return entries
+    }
+
+    private fun buildWorkflowSettingDetail(entries: List<SettingEntry>, workflow: JSONObject): String {
+        val detail = JSONObject()
+        for (e in entries) detail.put(e.key, e.value)
+
+        val meta = JSONObject()
+        (workflow.opt("id") as? String)?.let { meta.put("id", it) }
+        if (workflow.has("revision")) meta.put("revision", workflow.optInt("revision"))
+        if (workflow.has("last_node_id")) meta.put("last_node_id", workflow.optInt("last_node_id"))
+        if (workflow.has("last_link_id")) meta.put("last_link_id", workflow.optInt("last_link_id"))
+
+        val extra = workflow.optJSONObject("extra")
+        (extra?.opt("frontendVersion") as? String)?.let { meta.put("frontendVersion", it) }
+        extra?.optJSONObject("node_versions")?.let { meta.put("node_versions", it) }
+
+        if (meta.length() > 0) detail.put("workflow_meta", meta)
+        return detail.toString(2)
     }
 
     private fun extractModelName(

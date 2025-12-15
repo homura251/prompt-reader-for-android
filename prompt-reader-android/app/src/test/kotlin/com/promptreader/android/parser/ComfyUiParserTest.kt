@@ -28,4 +28,24 @@ class ComfyUiParserTest {
         val detail = JSONObject(r.settingDetail)
         assertEquals("sdxl.safetensors", detail.getString("Model"))
     }
+
+    @Test
+    fun `parses workflow-only via SDPromptReader`() {
+        val workflow = Fixtures.read("fixtures/comfyui_workflow_prompt_reader.json")
+        val r = ComfyUiParser.parseWorkflow(workflowText = workflow)
+
+        assertEquals("a cute cat, best quality", r.positive)
+        assertEquals("blurry, lowres", r.negative)
+
+        assertTrue(r.settingEntries.isNotEmpty())
+        val map = r.settingEntries.associate { it.key to it.value }
+        assertEquals("models/sd/sdxl.safetensors", map["Model"])
+        assertEquals("28", map["Steps"])
+        assertEquals("7.3", map["CFG scale"])
+        assertEquals("363312086", map["Seed"])
+        assertEquals("1472x704", map["Size"])
+
+        val detail = JSONObject(r.settingDetail)
+        assertTrue(detail.has("workflow_meta"))
+    }
 }

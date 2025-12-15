@@ -1,0 +1,28 @@
+{
+  "id": "wf-123",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 99,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "fast ckptLoader",
+      "widgets_values": [
+        "models/sd/sdxl.safetensors"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "SDPromptReader",
+      "widgets_values": [
+        "image.png",
+        "image",
+        0,
+        "a cute cat, best quality",
+        "blurry, lowres",
+        "prompt: a cute cat, best quality, steps: 28, height: 704, width: 1472, scale: 7.3, seed: 363312086"
+      ]
+    }
+  ],
+  "links": []
+}

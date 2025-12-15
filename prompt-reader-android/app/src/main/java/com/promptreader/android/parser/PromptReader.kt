@@ -25,8 +25,16 @@ object PromptReader {
 
         return when {
             isPng -> parsePng(context, uri)
-            isJpeg || isWebp -> parseExifLike(context, uri)
-            else -> PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = "Unsupported file")
+            isJpeg -> parseExifLike(context, uri, "JPEG")
+            isWebp -> parseExifLike(context, uri, "WEBP")
+            else -> PromptParseResult(
+                tool = "Unknown",
+                positive = "",
+                negative = "",
+                setting = "",
+                raw = "Unsupported file",
+                detectionPath = "Unknown",
+            )
         }
     }
 
@@ -41,6 +49,11 @@ object PromptReader {
         val software = textMap["Software"]
         val description = textMap["Description"]
 
+        val presentKeys = listOf("parameters", "prompt", "workflow", "Comment", "Software", "Description")
+            .filter { textMap.containsKey(it) }
+            .joinToString(",")
+        val base = "PNG -> tEXt($presentKeys)"
+
         // SwarmUI in PNG: parameters contains sui_image_params
         if (!parameters.isNullOrBlank() && parameters.contains("sui_image_params")) {
             val r = SwarmUiParser.parse(parameters)
@@ -52,6 +65,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> SwarmUiParser(parameters:sui_image_params)",
             )
         }
 
@@ -66,6 +80,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> NovelAiParser(legacy:Software+Description+Comment)",
             )
         }
 
@@ -80,6 +95,22 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> FooocusParser(Comment:json+negative_prompt)",
+            )
+        }
+
+        // ComfyUI workflow-only (some tools only embed workflow, not prompt graph)
+        if (prompt.isNullOrBlank() && !workflow.isNullOrBlank()) {
+            val r = ComfyUiParser.parseWorkflow(workflowText = workflow)
+            return PromptParseResult(
+                tool = r.tool,
+                positive = r.positive,
+                negative = r.negative,
+                setting = r.setting,
+                raw = r.raw,
+                settingEntries = r.settingEntries,
+                settingDetail = r.settingDetail,
+                detectionPath = "$base -> ComfyUiParser(workflow)",
             )
         }
 
@@ -94,11 +125,26 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> ComfyUiParser(prompt${if (!workflow.isNullOrBlank()) "+workflow" else ""})",
             )
         }
 
         // A1111
         if (!parameters.isNullOrBlank()) {
+            extractComfyUiWorkflowJson(parameters)?.let { workflowJson ->
+                val r = ComfyUiParser.parseWorkflow(workflowText = workflowJson)
+                return PromptParseResult(
+                    tool = r.tool,
+                    positive = r.positive,
+                    negative = r.negative,
+                    setting = r.setting,
+                    raw = r.raw,
+                    settingEntries = r.settingEntries,
+                    settingDetail = r.settingDetail,
+                    detectionPath = "$base -> ComfyUiParser(parameters:workflow-json)",
+                )
+            }
+
             val r = A1111Parser.parse(parameters)
             val tool = if (textMap.containsKey("prompt")) "ComfyUI (A1111 compatible)" else "A1111 webUI"
             return PromptParseResult(
@@ -109,6 +155,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> A1111Parser(parameters)",
             )
         }
 
@@ -124,10 +171,18 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> NovelAiParser(stealth:alpha-lsb)",
             )
         }
 
-        return PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = textMap.toString())
+        return PromptParseResult(
+            tool = "Unknown",
+            positive = "",
+            negative = "",
+            setting = "",
+            raw = textMap.toString(),
+            detectionPath = "$base -> Unknown",
+        )
     }
 
     private fun looksLikeFooocusComment(comment: String): Boolean {
@@ -140,13 +195,20 @@ object PromptReader {
         return obj.has("prompt") || obj.has("styles") || obj.has("performance")
     }
 
-    private fun parseExifLike(context: Context, uri: Uri): PromptParseResult {
+    private fun parseExifLike(context: Context, uri: Uri, formatLabel: String): PromptParseResult {
         val resolver = context.contentResolver
         val exif = resolver.openInputStream(uri)?.use { ExifInterface(it) }
 
         val userComment = exif?.getAttribute(ExifInterface.TAG_USER_COMMENT)
         val software = exif?.getAttribute(ExifInterface.TAG_SOFTWARE)
         val imageDescription = exif?.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)
+
+        val present = buildList {
+            if (!userComment.isNullOrBlank()) add("UserComment")
+            if (!software.isNullOrBlank()) add("Software")
+            if (!imageDescription.isNullOrBlank()) add("ImageDescription")
+        }.joinToString(",")
+        val base = "$formatLabel -> EXIF($present)"
 
         // SwarmUI in JPEG: user comment contains sui_image_params JSON
         if (!userComment.isNullOrBlank() && userComment.contains("sui_image_params")) {
@@ -159,7 +221,25 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> SwarmUiParser(UserComment:sui_image_params)",
             )
+        }
+
+        // ComfyUI workflow-only in EXIF user comment (some exporters store workflow JSON here)
+        if (!userComment.isNullOrBlank()) {
+            extractComfyUiWorkflowJson(userComment)?.let { workflowJson ->
+                val r = ComfyUiParser.parseWorkflow(workflowText = workflowJson)
+                return PromptParseResult(
+                    tool = r.tool,
+                    positive = r.positive,
+                    negative = r.negative,
+                    setting = r.setting,
+                    raw = r.raw,
+                    settingEntries = r.settingEntries,
+                    settingDetail = r.settingDetail,
+                    detectionPath = "$base -> ComfyUiParser(UserComment:workflow-json)",
+                )
+            }
         }
 
         // Fooocus: some variants store JSON in comment/usercomment
@@ -173,6 +253,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> FooocusParser(UserComment:json+negative_prompt)",
             )
         }
 
@@ -187,6 +268,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> A1111Parser(UserComment)",
             )
         }
 
@@ -202,6 +284,7 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> NovelAiParser(stealth:alpha-lsb)",
             )
         }
 
@@ -217,10 +300,28 @@ object PromptReader {
                 raw = r.raw,
                 settingEntries = r.settingEntries,
                 settingDetail = r.settingDetail,
+                detectionPath = "$base -> NovelAiParser(legacy:Software+ImageDescription)",
             )
         }
 
-        return PromptParseResult(tool = "Unknown", positive = "", negative = "", setting = "", raw = "No readable metadata")
+        return PromptParseResult(
+            tool = "Unknown",
+            positive = "",
+            negative = "",
+            setting = "",
+            raw = "No readable metadata",
+            detectionPath = "$base -> Unknown",
+        )
+    }
+
+    private fun extractComfyUiWorkflowJson(text: String): String? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        val candidate = text.substring(start).trim()
+        val obj = runCatching { JSONTokener(candidate).nextValue() }.getOrNull() as? JSONObject ?: return null
+        val nodes = obj.optJSONArray("nodes")
+        val links = obj.optJSONArray("links")
+        return if (nodes != null && links != null) candidate else null
     }
 
     private fun tryDecodeStealth(context: Context, uri: Uri): JSONObject? {
