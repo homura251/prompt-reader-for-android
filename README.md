@@ -1,4 +1,4 @@
-# Prompt Reader for Android
+# Prompt Viewer for Android
 
 一个用于在 Android 手机上读取图片里的 SD 提示词 / 参数的工具。
 
